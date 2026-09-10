@@ -1,0 +1,3 @@
+# Godot regenera estos identificadores al importar
+*.uid
+.godot/

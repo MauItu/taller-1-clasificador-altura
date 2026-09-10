@@ -1,0 +1,75 @@
+[gd_scene format=4]
+
+[ext_resource type="PackedScene" uid="uid://dm55h6ap605bw" path="res://parts/BeltConveyor.tscn" id="1_belt"]
+[ext_resource type="PackedScene" uid="uid://co2mqmdwpn57w" path="res://parts/BoxSpawner.tscn" id="2_spawn"]
+[ext_resource type="PackedScene" uid="uid://kdpe7o4ec1fa" path="res://parts/DiffuseSensor.tscn" id="3_eye"]
+[ext_resource type="PackedScene" uid="uid://5pjmdoyiub35" path="res://parts/Diverter.tscn" id="4_div"]
+[ext_resource type="PackedScene" uid="uid://bl73u0rvt2orv" path="res://parts/Despawner.tscn" id="5_desp"]
+[ext_resource type="Script" path="res://demos/height_sorter/height_sorter.gd" id="6_sorter"]
+[ext_resource type="PackedScene" uid="uid://dyhvoundu2kqc" path="res://parts/Building.tscn" id="7_bldg"]
+
+[node name="HeightSorter" type="Node3D"]
+
+[node name="Warehouse" parent="." instance=ExtResource("7_bldg")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 0, 0)
+width_sections = 3
+length_sections = 2
+
+[node name="MainLine" parent="." instance=ExtResource("1_belt")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
+width = 0.8
+length = 10.0
+speed = 1.0
+left_side_guards_enabled = false
+right_side_guards_enabled = false
+floor_plane = Plane(0, 1, 0, 0)
+
+[node name="BoxSpawner" parent="." instance=ExtResource("2_spawn") node_paths=PackedStringArray("conveyor")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1.22, 0)
+random_size = true
+random_size_min = Vector3(0.5, 0.15, 0.35)
+random_size_max = Vector3(0.5, 0.55, 0.35)
+boxes_per_minute = 30
+conveyor = NodePath("../MainLine")
+
+[node name="GatePresence" parent="." instance=ExtResource("3_eye")]
+transform = Transform3D(-1, 0, 0, 0, 1, 0, 0, 0, -1, 5, 0.71, 0.84)
+max_range = 1.0
+
+[node name="GateHeight" parent="." instance=ExtResource("3_eye")]
+transform = Transform3D(-1, 0, 0, 0, 1, 0, 0, 0, -1, 5, 1, 0.84)
+max_range = 1.0
+
+[node name="DivertEye" parent="." instance=ExtResource("3_eye")]
+transform = Transform3D(-1, 0, 0, 0, 1, 0, 0, 0, -1, 8.05, 0.71, 0.84)
+max_range = 1.0
+
+[node name="Diverter" parent="." instance=ExtResource("4_div")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7.8, 0.7, 1.5135)
+divert_time = 0.3
+divert_distance = 1.0
+
+[node name="RejectLine" parent="." instance=ExtResource("1_belt")]
+transform = Transform3D(0, 0, 1, 0, 1, 0, -1, 0, 0, 7.8, 0.9, -0.4)
+width = 0.8
+length = 2.5
+speed = 1.0
+left_side_guards_enabled = false
+right_side_guards_enabled = false
+floor_plane = Plane(0, 1, 0, 0)
+
+[node name="DespawnMain" parent="." instance=ExtResource("5_desp")]
+transform = Transform3D(2, 0, 0, 0, 1, 0, 0, 0, 2, 10.4, 1.2, 0)
+
+[node name="DespawnReject" parent="." instance=ExtResource("5_desp")]
+transform = Transform3D(2, 0, 0, 0, 1, 0, 0, 0, 2, 7.8, 1.2, -2.8)
+
+[node name="Sorter" type="Node3D" parent="." node_paths=PackedStringArray("gate_presence", "gate_height", "divert_eye", "diverter")]
+script = ExtResource("6_sorter")
+gate_presence = NodePath("../GatePresence")
+gate_height = NodePath("../GateHeight")
+divert_eye = NodePath("../DivertEye")
+diverter = NodePath("../Diverter")
+height_threshold = 0.35
+belt_surface_y = 0.9
+push_duration = 1.1
