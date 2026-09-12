@@ -5,10 +5,11 @@
 [ext_resource type="PackedScene" uid="uid://kdpe7o4ec1fa" path="res://parts/DiffuseSensor.tscn" id="3_eye"]
 [ext_resource type="PackedScene" uid="uid://5pjmdoyiub35" path="res://parts/Diverter.tscn" id="4_div"]
 [ext_resource type="PackedScene" uid="uid://bl73u0rvt2orv" path="res://parts/Despawner.tscn" id="5_desp"]
-[ext_resource type="Script" path="res://demos/height_sorter/height_sorter.gd" id="6_sorter"]
+[ext_resource type="Script" path="res://demos/height_sorter/height_gate.gd" id="6_gate"]
 [ext_resource type="PackedScene" uid="uid://dyhvoundu2kqc" path="res://parts/Building.tscn" id="7_bldg"]
 
 [node name="HeightSorter" type="Node3D"]
+metadata/oip_st_program = "(* ==========================================================================\n   Clasificador de cajas por altura  -  Taller 1\n   Programa de control IEC 61131-3 (Texto Estructurado)\n\n   ENTRADAS   tres fotocelulas difusas de la escena\n   SALIDA     comando de extension del desviador\n\n   La estacion de medicion determina si la caja supera la altura de corte.\n   El veredicto viaja en un registro de desplazamiento (FIFO) hasta que la\n   caja llega al desviador, de modo que la clasificacion no depende de la\n   velocidad de la cinta ni de temporizadores calibrados.\n   ========================================================================== *)\n\nVAR_INPUT\n    GatePresence : BOOL;    (* haz bajo  - lo corta toda caja       *)\n    GateHeight   : BOOL;    (* haz alto  - solo lo cortan las altas *)\n    DivertEye    : BOOL;    (* fotocelula de disparo del desviador  *)\nEND_VAR\n\nVAR_OUTPUT\n    DivertCmd : BOOL;       (* TRUE = paleta extendida *)\nEND_VAR\n\nVAR\n    GateRise  : R_TRIG;     (* flanco: entra caja a la estacion *)\n    GateFall  : F_TRIG;     (* flanco: sale caja de la estacion *)\n    EyeRise   : R_TRIG;     (* flanco: llega caja al desviador  *)\n    PushTimer : TON;        (* duracion del empuje              *)\n\n    TallLatch : BOOL;                   (* la caja actual corto el haz alto *)\n    Armed     : BOOL;                   (* hay una caja en curso en la estacion *)\n    Fifo      : ARRAY [0..7] OF BOOL;   (* registro de desplazamiento       *)\n    Pending   : INT;                    (* veredictos en transito           *)\n    Verdict   : BOOL;                   (* veredicto desencolado este scan  *)\n    i         : INT;\n\n    Counted   : INT;        (* estadisticas para el monitor ST *)\n    Diverted  : INT;\n    Passed    : INT;\nEND_VAR\n\n\n(* ---------- deteccion de flancos ---------- *)\nGateRise(CLK := GatePresence);\nGateFall(CLK := GatePresence);\nEyeRise(CLK := DivertEye);\n\n\n(* ---------- ESTACION DE MEDICION ----------\n   El veredicto se acumula durante toda la ventana en que la caja esta\n   frente a la estacion: basta con que corte el haz alto en algun instante\n   para marcarla como alta. Eso la hace inmune a rebotes de la caja. *)\n\nIF GateRise.Q THEN\n    TallLatch := FALSE;\n    Armed := TRUE;\nEND_IF;\n\nIF GatePresence AND GateHeight THEN\n    TallLatch := TRUE;\nEND_IF;\n\n(* La caja termino de pasar: el veredicto entra al final de la cola.\n   La guarda 'Armed' exige haber visto antes el flanco de entrada. Sin ella, el\n   F_TRIG de este runtime emite un flanco de bajada espurio en el primer scan\n   (su estado interno arranca en TRUE) y encolaria un veredicto fantasma, que\n   correria toda la cola una posicion de forma permanente. *)\nIF GateFall.Q AND Armed THEN\n    Armed := FALSE;\n    IF Pending < 8 THEN\n        Fifo[Pending] := TallLatch;\n        Pending := Pending + 1;\n        Counted := Counted + 1;\n    END_IF;\nEND_IF;\n\n\n(* ---------- DESVIADOR ----------\n   Al llegar una caja se desencola el veredicto mas viejo. Como las cajas no\n   se adelantan entre si en la cinta, ese veredicto es siempre el suyo. *)\n\nVerdict := FALSE;\n\nIF EyeRise.Q THEN\n    IF Pending > 0 THEN\n        Verdict := Fifo[0];\n        FOR i := 0 TO 6 DO\n            Fifo[i] := Fifo[i + 1];\n        END_FOR;\n        Pending := Pending - 1;\n        IF Verdict THEN\n            Diverted := Diverted + 1;\n        ELSE\n            Passed := Passed + 1;\n        END_IF;\n    END_IF;\nEND_IF;\n\n\n(* ---------- ACTUADOR ----------\n   La paleta sale al desencolar una caja alta y se retrae sola por tiempo. *)\n\nPushTimer(IN := DivertCmd, PT := T#1100ms);\n\nIF Verdict THEN\n    DivertCmd := TRUE;\nELSIF PushTimer.Q THEN\n    DivertCmd := FALSE;\nEND_IF;\n"
 
 [node name="Warehouse" parent="." instance=ExtResource("7_bldg")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 0, 0)
@@ -35,19 +36,35 @@ conveyor = NodePath("../MainLine")
 [node name="GatePresence" parent="." instance=ExtResource("3_eye")]
 transform = Transform3D(-1, 0, 0, 0, 1, 0, 0, 0, -1, 5, 0.71, 0.84)
 max_range = 1.0
+enable_comms = true
+tag_group_name = "ST"
+tag_groups = "ST"
+tag_name = "GatePresence"
 
 [node name="GateHeight" parent="." instance=ExtResource("3_eye")]
 transform = Transform3D(-1, 0, 0, 0, 1, 0, 0, 0, -1, 5, 1, 0.84)
 max_range = 1.0
+enable_comms = true
+tag_group_name = "ST"
+tag_groups = "ST"
+tag_name = "GateHeight"
 
 [node name="DivertEye" parent="." instance=ExtResource("3_eye")]
 transform = Transform3D(-1, 0, 0, 0, 1, 0, 0, 0, -1, 8.05, 0.71, 0.84)
 max_range = 1.0
+enable_comms = true
+tag_group_name = "ST"
+tag_groups = "ST"
+tag_name = "DivertEye"
 
 [node name="Diverter" parent="." instance=ExtResource("4_div")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7.8, 0.7, 1.5135)
 divert_time = 0.3
 divert_distance = 1.0
+enable_comms = true
+tag_group_name = "ST"
+tag_groups = "ST"
+tag_name = "DivertCmd"
 
 [node name="RejectLine" parent="." instance=ExtResource("1_belt")]
 transform = Transform3D(0, 0, 1, 0, 1, 0, -1, 0, 0, 7.8, 0.9, -0.4)
@@ -64,12 +81,8 @@ transform = Transform3D(2, 0, 0, 0, 1, 0, 0, 0, 2, 10.4, 1.2, 0)
 [node name="DespawnReject" parent="." instance=ExtResource("5_desp")]
 transform = Transform3D(2, 0, 0, 0, 1, 0, 0, 0, 2, 7.8, 1.2, -2.8)
 
-[node name="Sorter" type="Node3D" parent="." node_paths=PackedStringArray("gate_presence", "gate_height", "divert_eye", "diverter")]
-script = ExtResource("6_sorter")
-gate_presence = NodePath("../GatePresence")
+[node name="GateSetup" type="Node3D" parent="." node_paths=PackedStringArray("gate_height")]
+script = ExtResource("6_gate")
 gate_height = NodePath("../GateHeight")
-divert_eye = NodePath("../DivertEye")
-diverter = NodePath("../Diverter")
 height_threshold = 0.35
 belt_surface_y = 0.9
-push_duration = 1.1

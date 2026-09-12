@@ -2,6 +2,7 @@ extends SceneTree
 
 const DURATION := 120.0
 const THRESHOLD := 0.35
+const GROUP := "ST"
 
 var _t := 0.0
 var _demo: Node3D
@@ -10,16 +11,24 @@ var _alive := {}
 var _ok := 0
 var _bad := 0
 var _lost := 0
-
-
-func _initialize() -> void:
-	_demo = (load("res://demos/height_sorter/HeightSorter.tscn") as PackedScene).instantiate()
-	root.add_child(_demo)
-	Simulation.start()
+var _started := false
 
 
 func _process(delta: float) -> bool:
 	_t += delta
+	if not _started:
+		if _t < 0.5:
+			return false
+		_demo = (load("res://demos/height_sorter/HeightSorter.tscn") as PackedScene).instantiate()
+		root.add_child(_demo)
+		# SoftPlcBridge busca el programa ST en la raiz de la escena actual.
+		current_scene = _demo
+		OIPComms.set_soft_plc_watch_enabled(GROUP, true)
+		Simulation.start()
+		_started = true
+		_t = 0.0
+		return false
+
 	var now := {}
 	for b: Node3D in _boxes():
 		var rb := b.get_node_or_null("RigidBody3D") as Node3D
@@ -49,8 +58,7 @@ func _judge(d: Array) -> void:
 		_lost += 1
 		print("  ! caja h=%.2f perdida en (%.2f, %.2f, %.2f)" % [h, p.x, p.y, p.z])
 		return
-	var correct := (tall and exited_reject) or (not tall and exited_main)
-	if correct:
+	if (tall and exited_reject) or (not tall and exited_main):
 		_ok += 1
 	else:
 		_bad += 1
@@ -59,13 +67,17 @@ func _judge(d: Array) -> void:
 
 
 func _summary() -> void:
-	var s := _demo.get_node("Sorter")
+	var w: Dictionary = OIPComms.get_soft_plc_watch(GROUP)
 	print("=========== AUDITORIA %.0f s ===========" % DURATION)
-	print("  medidas en la estacion : %d  (altas %d / bajas %d)" % [s.counted, s.diverted, s.passed])
-	print("  cajas que completaron el recorrido: %d" % (_ok + _bad + _lost))
-	print("  clasificadas CORRECTAMENTE : %d" % _ok)
-	print("  clasificadas MAL           : %d" % _bad)
-	print("  perdidas (ni linea ni rechazo): %d" % _lost)
+	print("-- contadores internos del PLC (programa ST) --")
+	for k: String in ["Counted", "Diverted", "Passed", "Pending"]:
+		print("   %-9s = %s" % [k, w.get(k, "(sin dato)")])
+	print("-- destino real de las cajas (fisica de la escena) --")
+	print("   clasificadas CORRECTAMENTE : %d" % _ok)
+	print("   clasificadas MAL           : %d" % _bad)
+	print("   perdidas                   : %d" % _lost)
+	if w.is_empty():
+		print("   ADVERTENCIA: el watch del PLC vino vacio")
 
 
 func _boxes() -> Array:
