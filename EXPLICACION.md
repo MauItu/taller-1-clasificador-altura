@@ -16,7 +16,7 @@ Para instalarlo y correrlo, ver [`README.md`](README.md).
 6. [El PLC, línea por línea](#6-el-plc-línea-por-línea)
 7. [Por qué DOS fotocélulas](#7-por-qué-dos-fotocélulas-en-la-estación-de-medición)
 8. [Por qué un FIFO y no un temporizador](#8-por-qué-un-fifo-y-no-un-temporizador)
-9. [El único script propio de la escena](#9-el-único-script-propio-de-la-escena)
+9. [Los dos scripts propios de la escena](#9-los-dos-scripts-propios-de-la-escena)
 10. [Cómo se construyó](#10-cómo-se-construyó)
 11. [Cómo se verificó](#11-cómo-se-verificó)
 12. [El bug que vale la pena contar](#12-el-bug-que-vale-la-pena-contar)
@@ -129,6 +129,10 @@ SoftPlcBridge: feeding ST program (3666 chars) to soft_plc group 'ST'
 
 Esa línea es la confirmación de que el PLC recibió el programa. Si no aparece, no hay control.
 
+> **Cuidado:** ese envío ocurre **una sola vez**, y lee la escena que esté abierta en ese momento. Es
+> la trampa que explica la §9.2, y el motivo por el que la raíz de la escena lleva un script que
+> vuelve a entregar el programa por su cuenta.
+
 > **Consecuencia práctica:** lo que se ejecuta es el metadato del `.tscn`, **no** el archivo `.st`.
 > El `.st` es la fuente legible y versionable. `tools/sync_st_to_scene.py` copia uno al otro.
 
@@ -140,12 +144,12 @@ programa, sin cambiar una línea, se podría cargar en un PLC físico conectado 
 
 ## 4. La escena, nodo por nodo
 
-`demos/height_sorter/HeightSorter.tscn`. Todos los nodos salvo `GateSetup` son componentes que
-**ya trae Open Industry Project**.
+`demos/height_sorter/HeightSorter.tscn`. Salvo los dos scripts propios (§9), todos los nodos son
+componentes que **ya trae Open Industry Project**.
 
 | Nodo | Tipo OIP | Posición (x, y, z) | Función | Parámetros clave |
 |---|---|---|---|---|
-| `HeightSorter` | Node3D | — | raíz; lleva el metadato `oip_st_program` | — |
+| `HeightSorter` | Node3D | — | raíz; lleva el metadato `oip_st_program` y el script que lo entrega al PLC | *(script propio)* |
 | `Warehouse` | Building | (5, 0, 0) | el galpón: piso, paredes, techo, luz | 3 × 2 secciones = 30 × 20 m |
 | `MainLine` | BeltConveyor | (0, 0.9, 0) | línea principal | 10 m × 0.8 m, 1 m/s |
 | `BoxSpawner` | BoxSpawner | (1, 1.22, 0) | genera las cajas | 30 cajas/min, alto 0.15–0.55 m |
@@ -525,10 +529,13 @@ t=  9.5 med=3.0 alt=1.0 baj=1.0 cola=1.0 ...D | h0.39@8.0,-1.2 ...
 
 ---
 
-## 9. El único script propio de la escena
+## 9. Los dos scripts propios de la escena
 
-`demos/height_sorter/height_gate.gd`, montado en el nodo `GateSetup`. Tiene 40 líneas y **no contiene
-lógica de control**:
+Ninguno de los dos contiene lógica de control: esa vive entera en el programa ST.
+
+### 9.1 `height_gate.gd` — ajuste mecánico del sensor
+
+Montado en el nodo `GateSetup`. Tiene 40 líneas y **no contiene lógica de control**:
 
 ```gdscript
 func _apply() -> void:
@@ -546,6 +553,40 @@ vivo** desde el Inspector, sin tocar ni la escena ni el programa.
 
 > Por qué `@tool` y por qué los `set`: el script corre también en el editor, así que mover el slider
 > del Inspector reubica el sensor inmediatamente, sin necesidad de reiniciar la simulación.
+
+### 9.2 `st_program_loader.gd` — entrega del programa al PLC
+
+Montado en la **raíz** de la escena, junto al metadato `oip_st_program`. Existe para tapar un hueco
+real de OIP, y conviene entenderlo porque es el tipo de detalle que hace que algo "funcione en una
+máquina y no en otra".
+
+`SoftPlcBridge`, el autoload de OIP, entrega el programa al PLC **una sola vez**: cuando se
+inicializa el grupo de tags, leyendo la escena que esté abierta en el editor **en ese instante**
+(`src/comms/soft_plc_bridge.gd:27`). El grupo se inicializa al arrancar el editor. Entonces:
+
+| Cómo abrís | Qué pasa |
+|---|---|
+| editor con la escena en la línea de comandos | la escena está abierta al inicializarse el grupo → el PLC recibe el programa |
+| abrir el proyecto y **después** la escena | al inicializarse el grupo no hay escena → `no scene root` → **el PLC se queda sin programa** |
+
+Y no hay reenvío: ni al abrir una escena más tarde, ni al apretar **Start**
+(`_on_started()` solo hace `set_sim_running(true)`).
+
+El modo de fallo es especialmente traicionero porque **la escena parece viva**: las cajas salen, las
+cintas andan, los haces se ponen rojos. Lo único que no pasa es que el desviador se mueva, y todas
+las cajas altas se van por la línea principal.
+
+El script reenvía el programa en los tres momentos en que puede hacer falta:
+
+```gdscript
+func _ready() -> void:
+	_conectar()      # tag_group_initialized + Simulation.started
+	_entregar()      # y ya mismo, por si el grupo se inicializo antes
+```
+
+`set_soft_plc_program` reemplaza el programa, así que reenviar de más es inofensivo. El test
+`tools/check_plc_arranca.gd` (§11.2) reproduce la condición de fallo y verifica que el PLC arranca
+igual.
 
 ---
 
@@ -644,6 +685,7 @@ aleatorias, así que los números exactos varían entre corridas; lo que no var�
 |---|---|---|
 | `tools/check_st.gd` | Compila el programa ST sin ejecutarlo, e imprime los grupos de tags registrados y el estado global de comms. | Después de tocar el `.st`, o para diagnosticar "el PLC no arranca". 2 s. |
 | `tools/verify_height_sorter.gd` | Traza en vivo de 30 s: geometría de los haces + una línea cada 0.5 s con contadores del PLC, estado de los 3 sensores, comando al desviador y posición de cada caja. | Después de mover algo en la escena, para ver si un haz quedó mal alineado o el desviador dispara tarde. |
+| `tools/check_plc_arranca.gd` | Reproduce la condición de §9.2 —escena instanciada sin que `SoftPlcBridge` la encuentre— y verifica que el PLC recibe el programa igual. Sale con código 1 si no. | Después de tocar la raíz de la escena o el cargador del programa. 30 s. |
 
 ---
 
@@ -754,8 +796,9 @@ la clasificación sigue siendo correcta, por lo de §8.
 
 **¿Dónde está la lógica de control?**
 En `demos/height_sorter/height_sorter.st`, ejecutándose en el Soft PLC de OIP. La escena no tiene
-lógica: los sensores publican bits y el desviador obedece un bit. El único script propio en la escena
-(`GateSetup`) posiciona un sensor, que es ajuste mecánico, no control.
+lógica: los sensores publican bits y el desviador obedece un bit. Los dos scripts propios de la
+escena no controlan nada: `GateSetup` posiciona un sensor (ajuste mecánico) y el de la raíz solo le
+entrega el programa ST al PLC (§9).
 
 **¿Es realmente un PLC o es un "como si"?**
 Es un runtime IEC 61131-3 completo. El programa está en Texto Estructurado estándar y usa solo
@@ -872,7 +915,17 @@ Transform3D(0, 0, 1,  0, 1, 0,  -1, 0, 0,  ox, oy, oz)
 Que es lo que tiene `RejectLine`. Escribirlo "como columnas" da el giro al revés y la cinta de
 rechazo transporta hacia la línea principal en vez de alejarse.
 
-### 16.4 El primer arranque del proyecto tira errores del addon de comms
+### 16.4 El programa ST se entrega una sola vez, al arrancar el editor
+
+La peor de todas, porque falla en silencio y con la escena aparentemente viva. Está explicada en
+detalle en §9.2: `SoftPlcBridge` entrega el programa al inicializarse el grupo de tags, leyendo la
+escena abierta en ese instante, y no reintenta nunca. Si la escena no estaba abierta, el PLC se queda
+vacío y **todas las cajas pasan de largo**.
+
+Lo resuelve `st_program_loader.gd` en la raíz de la escena. Si algún día alguien lo saca, el síntoma
+es ese y el test `tools/check_plc_arranca.gd` lo detecta.
+
+### 16.5 El primer arranque del proyecto tira errores del addon de comms
 
 Al importar el proyecto por primera vez, la GDExtension `oip_comms` todavía no está registrada
 durante el escaneo inicial del filesystem, y aparecen cosas como:

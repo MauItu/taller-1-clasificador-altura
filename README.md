@@ -35,6 +35,7 @@ demos/height_sorter/
     HeightSorter.tscn     la escena (planta) + el programa ST embebido como metadato
     height_sorter.st      el programa de PLC, fuente legible y versionable
     height_gate.gd        ajuste mecánico de la altura del sensor (no es lógica de control)
+    st_program_loader.gd  entrega el programa ST al PLC (va en la raíz de la escena)
 oip_data/
     tag_groups.cfg        define el grupo de tags "ST" (protocolo soft_plc)
     comms_settings.cfg    habilitador global de comunicaciones
@@ -42,6 +43,7 @@ tools/
     audit_height_sorter.gd    auditoría headless de 120 s (la verificación principal)
     verify_height_sorter.gd   traza en vivo, para depurar geometría
     check_st.gd               compila el programa ST sin ejecutarlo
+    check_plc_arranca.gd      verifica que el PLC reciba el programa (test de regresión)
     sync_st_to_scene.py       embebe el .st dentro del .tscn
 scripts/
     instalar.ps1 / instalar.sh   copian lo anterior dentro del proyecto de OIP
@@ -176,6 +178,9 @@ Las otras dos herramientas:
 
 :: traza en vivo, 30 s: contadores del PLC + estado de los 3 sensores + posición de cada caja
 ... --script res://tools/verify_height_sorter.gd
+
+:: 30 s: verifica que el PLC reciba el programa aun en la condición que lo rompía
+... --script res://tools/check_plc_arranca.gd
 ```
 
 ---
@@ -234,6 +239,10 @@ la caja pasa y, al salir, entra en un **FIFO**. Aguas abajo, `DivertEye` desenco
 viejo cuando llega una caja. Por eso se puede cambiar la velocidad de la cinta o el caudal del
 spawner sin recalibrar nada: **no hay ningún tiempo calibrado en el sistema**.
 
+El programa ST se lo entrega al PLC el script `st_program_loader.gd` que cuelga de la raíz de la
+escena. No es lógica de control: cubre un hueco de OIP, que solo entrega el programa una vez al
+arrancar el editor y se lo saltea si la escena todavía no estaba abierta (§9.2 de `EXPLICACION.md`).
+
 El detalle completo — por qué dos sensores, por qué FIFO y no temporizador, de dónde salen las
 coordenadas — está en [`EXPLICACION.md`](EXPLICACION.md).
 
@@ -270,6 +279,7 @@ archivo `.st`. El `.st` es la fuente legible y versionable; el `.tscn` es lo que
 | `SoftPlcBridge: scene root has no 'oip_st_program' metadata` | Falta copiar `demos/` o se abrió otra escena. |
 | El PLC no arranca / no hay grupo `ST` | Falta copiar `oip_data/`. Verificalo con `--script res://tools/check_st.gd`. |
 | Las cajas caen al vacío al aparecer | `BoxSpawner` tiene que colgar **directo de la raíz** de la escena (ver §16.1 de `EXPLICACION.md`). |
+| **Todo se mueve pero el desviador nunca sale y las cajas altas pasan de largo** | El PLC se quedó sin programa. Lo cubre `st_program_loader.gd` en la raíz de la escena; si pasa, tenés una copia vieja de `HeightSorter.tscn`. Comprobalo con `--script res://tools/check_plc_arranca.gd`. Para destrabar en el momento: dock del **ST Editor** → `Apply`. Ver §9.2 de `EXPLICACION.md`. |
 
 ---
 
